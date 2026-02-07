@@ -28,7 +28,6 @@ class SyncMessages @Inject constructor(
     private val syncManager: SyncRepository,
     private val updateBadge: UpdateBadge
 ) : Interactor<Unit>() {
-
     override fun buildObservable(params: Unit): Flowable<*> {
         return Flowable.just(System.currentTimeMillis())
                 .doOnNext { syncManager.syncMessages() }

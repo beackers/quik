@@ -50,6 +50,8 @@ interface MessageRepository {
 
     fun getMessages(messageIds: Collection<Long>): RealmResults<Message>
 
+    fun getMessageThreadIds(): List<Long>
+
     fun getMessageForPart(id: Long): Message?
 
     fun getLastIncomingMessage(threadId: Long): RealmResults<Message>
