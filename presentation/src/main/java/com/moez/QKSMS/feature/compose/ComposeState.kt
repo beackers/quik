@@ -52,4 +52,7 @@ data class ComposeState(
     val recipientCount: Int = 1,
     val audioMsgRecording: Boolean = false,
     val saveDraft: Boolean = true,
+    val notificationsEnabled: Boolean = true,
+    val notificationChannelEnabled: Boolean = true,
+    val threadNotificationsEnabled: Boolean = true,
 )

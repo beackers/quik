@@ -90,6 +90,7 @@ interface ComposeView : QkView<ComposeState> {
     val recordAudioMsgRecordVisible: Subject<Boolean>
     val recordAudioRecord: Subject<MicInputCloudView.ViewState>
     val recordAudioChronometer: Subject<Boolean>
+    val notificationBannerButtonIntent: Subject<Unit>
 
     fun clearSelection()
     fun toggleSelectAll()

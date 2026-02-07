@@ -327,6 +327,18 @@ class Navigator @Inject constructor(
         startActivity(intent)
     }
 
+    fun showAppNotificationSettings() {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.fromParts("package", context.packageName, null))
+        }
+
+        startActivity(intent)
+    }
+
     fun showNotificationSettings(threadId: Long = 0) {
         val intent = Intent(context, NotificationPrefsActivity::class.java)
         intent.putExtra("threadId", threadId)

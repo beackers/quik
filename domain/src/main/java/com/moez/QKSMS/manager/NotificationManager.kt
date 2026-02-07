@@ -37,4 +37,8 @@ interface NotificationManager {
 
     fun cancel(i: Int)
 
+    fun areNotificationsEnabled(): Boolean
+
+    fun isNotificationChannelEnabled(threadId: Long = 0L): Boolean
+
 }

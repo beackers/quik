@@ -527,6 +527,19 @@ class NotificationManagerImpl @Inject constructor(
         }
     }
 
+    override fun areNotificationsEnabled(): Boolean {
+        return NotificationManagerCompat.from(context).areNotificationsEnabled()
+    }
+
+    override fun isNotificationChannelEnabled(threadId: Long): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return true
+        }
+
+        val channel = getNotificationChannel(threadId) ?: getNotificationChannel(0L)
+        return channel?.importance != NotificationManager.IMPORTANCE_NONE
+    }
+
     override fun getNotificationForBackup(): NotificationCompat.Builder {
         if (Build.VERSION.SDK_INT >= 26) {
             val name = context.getString(R.string.backup_notification_channel_name)
