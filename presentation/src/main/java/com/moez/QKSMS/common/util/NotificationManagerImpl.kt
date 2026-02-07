@@ -80,6 +80,7 @@ class NotificationManagerImpl @Inject constructor(
     companion object {
         const val DEFAULT_CHANNEL_ID = "notifications_default"
         const val BACKUP_RESTORE_CHANNEL_ID = "notifications_backup_restore"
+        const val BLOCKED_MESSAGE_CHANNEL_ID = "notifications_blocked_messages"
 
         val VIBRATE_PATTERN = longArrayOf(0, 200, 0, 200)
     }
@@ -89,6 +90,7 @@ class NotificationManagerImpl @Inject constructor(
     init {
         // Make sure the default channel has been initialized
         createNotificationChannel()
+        createBlockedMessageChannel()
     }
 
     // Required for running workers on Android 12 and older
@@ -428,6 +430,44 @@ class NotificationManagerImpl @Inject constructor(
         notificationManager.notify(threadId.toInt() + 100000, notification.build())
     }
 
+    override fun notifyBlockedMessage(messageId: Long, rule: dev.octoshrimpy.quik.manager.NotificationManager.BlockedMessageRule, reason: String?) {
+        if (!permissions.hasNotifications()) {
+            Timber.w("Cannot notify blocked message because we don't have the notification permission")
+            return
+        }
+
+        val title = context.getString(R.string.notification_blocked_message_title)
+        val ruleLabel = when (rule) {
+            dev.octoshrimpy.quik.manager.NotificationManager.BlockedMessageRule.BLOCKING ->
+                context.getString(R.string.notification_blocked_message_rule_blocking)
+            dev.octoshrimpy.quik.manager.NotificationManager.BlockedMessageRule.CONTENT_FILTER ->
+                context.getString(R.string.notification_blocked_message_rule_content_filter)
+        }
+        val contentText = when {
+            reason.isNullOrBlank() -> context.getString(R.string.notification_blocked_message_text, ruleLabel)
+            else -> context.getString(R.string.notification_blocked_message_text_with_reason, ruleLabel, reason)
+        }
+
+        val contentIntent = Intent(context, dev.octoshrimpy.quik.feature.settings.SettingsActivity::class.java)
+        val contentPI = PendingIntent.getActivity(
+            context,
+            messageId.toInt(),
+            contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, getBlockedMessageChannelId())
+            .setContentTitle(title)
+            .setContentText(contentText)
+            .setColor(colors.theme().theme)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setSmallIcon(R.drawable.ic_notification_failed)
+            .setAutoCancel(true)
+            .setContentIntent(contentPI)
+
+        notificationManager.notify(messageId.toInt() + 200000, notification.build())
+    }
+
     private fun getReplyAction(threadId: Long): NotificationCompat.Action {
         val replyIntent = Intent(context, RemoteMessagingReceiver::class.java).putExtra("threadId", threadId)
         val replyPI = PendingIntent.getBroadcast(context, threadId.toInt(), replyIntent,
@@ -489,6 +529,27 @@ class NotificationManagerImpl @Inject constructor(
         notificationManager.createNotificationChannel(channel)
     }
 
+    private fun createBlockedMessageChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
+
+        if (notificationManager.notificationChannels.any { channel -> channel.id == BLOCKED_MESSAGE_CHANNEL_ID }) {
+            return
+        }
+
+        val name = context.getString(R.string.notification_blocked_message_channel_name)
+        val channel = NotificationChannel(
+            BLOCKED_MESSAGE_CHANNEL_ID,
+            name,
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = context.getString(R.string.notification_blocked_message_channel_description)
+        }
+
+        notificationManager.createNotificationChannel(channel)
+    }
+
     /**
      * Returns the notification channel for the given conversation, or null if it doesn't exist
      */
@@ -512,6 +573,14 @@ class NotificationManagerImpl @Inject constructor(
     private fun getChannelIdForNotification(threadId: Long): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             return getNotificationChannel(threadId)?.id ?: DEFAULT_CHANNEL_ID
+        }
+
+        return DEFAULT_CHANNEL_ID
+    }
+
+    private fun getBlockedMessageChannelId(): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            return BLOCKED_MESSAGE_CHANNEL_ID
         }
 
         return DEFAULT_CHANNEL_ID

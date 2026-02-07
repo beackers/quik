@@ -42,6 +42,7 @@ class BlockingController : QkController<BlockingView, BlockingState, BlockingPre
     override val messageContentFiltersIntent by lazy { messageContentFilters.clicks() }
     override val blockedMessagesIntent by lazy { blockedMessages.clicks() }
     override val dropClickedIntent by lazy { drop.clicks() }
+    override val notifyBlockedClickedIntent by lazy { notifyBlocked.clicks() }
 
     @Inject lateinit var colors: Colors
     @Inject override lateinit var presenter: BlockingPresenter
@@ -67,6 +68,7 @@ class BlockingController : QkController<BlockingView, BlockingState, BlockingPre
     override fun render(state: BlockingState) {
         blockingManager.summary = state.blockingManager
         drop.checkbox.isChecked = state.dropEnabled
+        notifyBlocked.checkbox.isChecked = state.notifyBlockedEnabled
         blockedMessages.isEnabled = !state.dropEnabled
     }
 
