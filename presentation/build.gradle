@@ -67,7 +67,7 @@ android {
             signingConfig signingConfigs.release
         }
         debug {
-            applicationIdSuffix ".debug-diag-dropped-msg"
+            applicationIdSuffix ".debug_diag_dropped_msg"
             versionNameSuffix "-debug-diag-dropped-msg"
             resValue("string", "app_name", "QUIK-Debug")
             resValue("string", "application_id", defaultConfig.applicationId)
