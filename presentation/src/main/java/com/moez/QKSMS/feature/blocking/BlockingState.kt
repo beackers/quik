@@ -20,5 +20,6 @@ package dev.octoshrimpy.quik.feature.blocking
 
 data class BlockingState(
     val blockingManager: String = "",
-    val dropEnabled: Boolean = false
+    val dropEnabled: Boolean = false,
+    val notifyBlockedEnabled: Boolean = false
 )

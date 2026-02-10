@@ -170,6 +170,17 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
 
                     if (action is BlockingClient.Action.Block && shouldDrop) {
                         messageRepo.deleteMessages(listOf(message.id))
+                        recordDroppedMessage(
+                            message.id,
+                            message.threadId,
+                            dev.octoshrimpy.quik.manager.NotificationManager.BlockedMessageRule.BLOCKING,
+                            action.reason
+                        )
+                        maybeNotifyBlockedMessage(
+                            message.id,
+                            dev.octoshrimpy.quik.manager.NotificationManager.BlockedMessageRule.BLOCKING,
+                            action.reason
+                        )
                     } else {
                         when (action) {
                             is BlockingClient.Action.Block -> {
@@ -191,6 +202,17 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
                         if (messageFilterAction) {
                             Timber.v("message dropped based on content filters")
                             messageRepo.deleteMessages(listOf(message.id))
+                            recordDroppedMessage(
+                                message.id,
+                                message.threadId,
+                                dev.octoshrimpy.quik.manager.NotificationManager.BlockedMessageRule.CONTENT_FILTER,
+                                null
+                            )
+                            maybeNotifyBlockedMessage(
+                                message.id,
+                                dev.octoshrimpy.quik.manager.NotificationManager.BlockedMessageRule.CONTENT_FILTER,
+                                null
+                            )
                             return Result.failure(inputData)
                         }
 
@@ -264,6 +286,31 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
                     locationUrl
                 )
             )
+        }
+    }
+
+    private fun recordDroppedMessage(
+        messageId: Long,
+        threadId: Long,
+        rule: dev.octoshrimpy.quik.manager.NotificationManager.BlockedMessageRule,
+        reason: String?
+    ) {
+        Timber.tag("MessageDrop").i(
+            "Dropped MMS messageId=%d threadId=%d rule=%s reason=%s",
+            messageId,
+            threadId,
+            rule.name,
+            reason ?: "unknown"
+        )
+    }
+
+    private fun maybeNotifyBlockedMessage(
+        messageId: Long,
+        rule: dev.octoshrimpy.quik.manager.NotificationManager.BlockedMessageRule,
+        reason: String?
+    ) {
+        if (prefs.notifyBlockedMessages.get()) {
+            notificationManager.notifyBlockedMessage(messageId, rule, reason)
         }
     }
 

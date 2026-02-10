@@ -23,11 +23,18 @@ import androidx.core.app.NotificationCompat
 
 interface NotificationManager {
 
+    enum class BlockedMessageRule {
+        BLOCKING,
+        CONTENT_FILTER
+    }
+
     fun getForegroundNotificationForWorkersOnOlderAndroids(): Notification
 
     fun update(threadId: Long)
 
     fun notifyFailed(threadId: Long)
+
+    fun notifyBlockedMessage(messageId: Long, rule: BlockedMessageRule, reason: String? = null)
 
     fun createNotificationChannel(threadId: Long = 0L)
 

@@ -346,6 +346,8 @@
     <string name="blocking_title">Blocking</string>
     <string name="blocking_drop_title">Drop messages</string>
     <string name="blocking_drop_summary">Drop incoming messages from blocked senders instead of hiding them</string>
+    <string name="blocking_notify_blocked_title">Notify when messages are blocked</string>
+    <string name="blocking_notify_blocked_summary">Show a notification when messages are blocked or dropped by your rules</string>
     <string name="blocking_conversations">Blocked conversations</string>
 
     <string name="blocking_manager_title">Blocking Manager</string>
@@ -520,6 +522,13 @@
     <string name="notification_foreground_worker_title">Receiving message</string>
     <string name="notification_foreground_worker_text">On Android 12 and older, a notification is required for the background work that enables receiving messages.</string>
     <string name="notification_message_failed_action">Resend</string>
+    <string name="notification_blocked_message_title">Message blocked</string>
+    <string name="notification_blocked_message_text">A message was blocked by %s.</string>
+    <string name="notification_blocked_message_text_with_reason">A message was blocked by %1$s. Reason: %2$s.</string>
+    <string name="notification_blocked_message_rule_blocking">blocking rules</string>
+    <string name="notification_blocked_message_rule_content_filter">content filters</string>
+    <string name="notification_blocked_message_channel_name">Blocked message alerts</string>
+    <string name="notification_blocked_message_channel_description">Notifications shown when a message is blocked by your rules.</string>
 
     <string-array name="night_modes">
         <item>System</item>
