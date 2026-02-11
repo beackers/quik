@@ -193,7 +193,7 @@
     <string name="backup_disclaimer">В момента за резервни копия и възстановяване се поддържа само SMS. Поддръжка на MMS и резервни копия по график ще бъдат поддържани скоро!</string>
     <string name="backup_now">Създаване на резервно копие</string>
     <string name="backup_progress_parsing">Разбор на резервното копие…</string>
-    <string name="backup_progress_running">%d/%d съобщения</string>
+    <string name="backup_progress_running">%1$d/%2$d съобщения</string>
     <string name="backup_progress_saving">Запазване на резервно копие…</string>
     <string name="backup_progress_syncing">Синхронизиране на съобщения…</string>
     <string name="backup_progress_finished">Готово!</string>

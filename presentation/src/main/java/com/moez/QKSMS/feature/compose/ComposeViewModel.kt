@@ -120,6 +120,7 @@ class ComposeViewModel @Inject constructor(
     private val messageRepo: MessageRepository,
     private val scheduledMessageRepo: ScheduledMessageRepository,
     private val navigator: Navigator,
+    private val notificationManager: dev.octoshrimpy.quik.manager.NotificationManager,
     private val permissionManager: PermissionManager,
     private val phoneNumberUtils: PhoneNumberUtils,
     private val prefs: Preferences,
@@ -314,6 +315,35 @@ class ComposeViewModel @Inject constructor(
         super.bindView(view)
 
         val sharing = (sharedText.isNotEmpty() || sharedAttachments.isNotEmpty())
+
+        val notificationHealthTrigger = Observable.merge(
+            state.map { it.threadId }.distinctUntilChanged().map { Unit },
+            view.activityVisibleIntent.filter { visible -> visible }.map { Unit }
+        )
+
+        disposables += notificationHealthTrigger
+            .withLatestFrom(state) { _, state -> state.threadId }
+            .observeOn(Schedulers.io())
+            .map { currentThreadId ->
+                Triple(
+                    notificationManager.areNotificationsEnabled(),
+                    notificationManager.isNotificationChannelEnabled(currentThreadId),
+                    prefs.notifications(currentThreadId).get()
+                )
+            }
+            .distinctUntilChanged()
+            .doOnNext { (notificationsEnabled, notificationChannelEnabled, threadNotificationsEnabled) ->
+                newState {
+                    copy(
+                        notificationsEnabled = notificationsEnabled,
+                        notificationChannelEnabled = notificationChannelEnabled,
+                        threadNotificationsEnabled = threadNotificationsEnabled
+                    )
+                }
+            }
+            .autoDisposable(view.scope())
+            .subscribe()
+
         if (shouldShowContacts) {
             shouldShowContacts = false
             view.showContacts(sharing, selectedChips.blockingFirst())
@@ -1284,6 +1314,17 @@ class ComposeViewModel @Inject constructor(
                 }
                 .autoDisposable(view.scope())
                 .subscribe { view.clearSelection() }
+
+        view.notificationBannerButtonIntent
+            .withLatestFrom(state) { _, state -> state }
+            .autoDisposable(view.scope())
+            .subscribe { state ->
+                when {
+                    !state.notificationsEnabled -> navigator.showAppNotificationSettings()
+                    !state.notificationChannelEnabled -> navigator.showNotificationChannel(state.threadId)
+                    !state.threadNotificationsEnabled -> navigator.showNotificationSettings(state.threadId)
+                }
+            }
 
         // clear the current message schedule, text and attachments
         view.clearCurrentMessageIntent

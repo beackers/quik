@@ -78,6 +78,12 @@
     <string name="main_permission_contacts">QUIK needs permission to view your contacts</string>
     <string name="main_permission_notifications">QUIK needs permission to display notifications</string>
     <string name="main_permission_allow">Allow</string>
+    <string name="main_notifications_disabled_title">Notifications are off</string>
+    <string name="main_notifications_disabled_message">Turn on app notifications to see new message alerts.</string>
+    <string name="main_notifications_disabled_action">Settings</string>
+    <string name="main_notification_channel_disabled_title">Notification channel is off</string>
+    <string name="main_notification_channel_disabled_message">Enable the default channel to receive message alerts.</string>
+    <string name="main_notification_channel_disabled_action">Channel</string>
 
     <string name="scheduled_menu_send_now">Send now</string>
     <string name="scheduled_menu_edit_message">Edit message</string>
@@ -133,6 +139,15 @@
     <string name="compose_number_picker_always">Always</string>
     <string name="compose_title_selected">%d selected</string>
     <string name="compose_subtitle_results">%1$d of %2$d results</string>
+    <string name="compose_notifications_disabled_title">Notifications are off</string>
+    <string name="compose_notifications_disabled_message">Turn on notifications to receive message alerts.</string>
+    <string name="compose_notifications_disabled_action">Settings</string>
+    <string name="compose_notification_channel_disabled_title">Notification channel is off</string>
+    <string name="compose_notification_channel_disabled_message">Enable the channel for this conversation to receive alerts.</string>
+    <string name="compose_notification_channel_disabled_action">Channel</string>
+    <string name="compose_thread_notifications_off_title">Conversation notifications are off</string>
+    <string name="compose_thread_notifications_off_message">Enable notifications for this conversation to see alerts.</string>
+    <string name="compose_thread_notifications_off_action">Enable</string>
     <string name="compose_send_group_title">Send as group message</string>
     <string name="compose_send_group_summary_on">Recipients and replies will be visible to everyone</string>
     <string name="compose_send_group_summary_off">Messages will be sent separately to all recipients</string>
@@ -238,7 +253,7 @@
     <string name="backup_disclaimer">Currently, only SMS is supported by Backup and Restore. MMS support and scheduled backups will be coming soon!</string>
     <string name="backup_now">Backup now</string>
     <string name="backup_progress_parsing">Parsing backup…</string>
-    <string name="backup_progress_running">%d/%d messages</string>
+    <string name="backup_progress_running">%1$d/%2$d messages</string>
     <string name="backup_progress_saving">Saving backup…</string>
     <string name="backup_progress_syncing">Syncing messages…</string>
     <string name="backup_progress_finished">Finished!</string>

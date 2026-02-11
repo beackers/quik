@@ -34,6 +34,8 @@ data class MainState(
     val smsPermission: Boolean = true,
     val contactPermission: Boolean = true,
     val notificationPermission: Boolean = true,
+    val notificationsEnabled: Boolean = true,
+    val notificationChannelEnabled: Boolean = true,
 )
 
 sealed class MainPage
