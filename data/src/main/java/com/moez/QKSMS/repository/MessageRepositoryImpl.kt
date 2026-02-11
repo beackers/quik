@@ -141,6 +141,16 @@ open class MessageRepositoryImpl @Inject constructor(
             .anyOf("id", messageIds.toLongArray())
             .findAll()
 
+    override fun getMessageThreadIds(): List<Long> =
+        Realm.getDefaultInstance().use { realm ->
+            realm.where(Message::class.java)
+                .distinct("threadId")
+                .findAll()
+                .mapNotNull { message ->
+                    if (message.isValid) message.threadId else null
+                }
+        }
+
     override fun getMessageForPart(id: Long) =
         Realm.getDefaultInstance()
             .where(Message::class.java)
