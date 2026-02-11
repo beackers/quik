@@ -67,7 +67,7 @@ android {
             signingConfig signingConfigs.release
         }
         debug {
-            applicationIdSuffix ".debug-pyld"
+            applicationIdSuffix ".debug_pyld"
             versionNameSuffix "-debug-pyld"
             resValue("string", "app_name", "QUIK_pyld")
             resValue("string", "application_id", defaultConfig.applicationId)
