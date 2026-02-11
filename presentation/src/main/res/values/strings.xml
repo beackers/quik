@@ -334,6 +334,8 @@
     <string name="settings_mms_weblink_title">Link handling in messages</string>
     <string name="settings_disable_screenshots_title">Disable Screenshots</string>
     <string name="settings_diable_screenshots_summary">Prevent your OS and other apps from taking screenshots of the app.</string>
+    <string name="settings_sync_missed_title">Sync missed messages</string>
+    <string name="settings_sync_missed_summary">Refresh conversations and unread counts without a full re-sync</string>
     <string name="settings_sync_title">Sync messages</string>
     <string name="settings_sync_summary">Re-sync your messages with the native Android SMS database</string>
     <string name="settings_about_title">About QUIK</string>
@@ -510,6 +512,10 @@
     </plurals>
 
     <string name="toast_qksms_plus">You must unlock QUIK+ to use this</string>
+    <string name="toast_sync_missed_started">Syncing missed messages…</string>
+    <string name="toast_sync_missed_complete">Sync complete</string>
+    <string name="toast_sync_missed_no_updates">No new updates found</string>
+    <string name="toast_sync_missed_failed">Couldn’t sync missed messages</string>
 
     <plurals name="notification_new_messages">
         <item quantity="one">New message</item>

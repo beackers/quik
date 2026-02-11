@@ -80,6 +80,7 @@ class SettingsController : QkController<SettingsView, SettingsState, SettingsPre
     private val signatureSubject: Subject<String> = PublishSubject.create()
 
     private val progressAnimator by lazy { ObjectAnimator.ofInt(syncingProgress, "progress", 0, 0) }
+    private var syncMissedSnackbar: Snackbar? = null
 
     init {
         appComponent.inject(this)
@@ -213,6 +214,35 @@ class SettingsController : QkController<SettingsView, SettingsState, SettingsPre
                 setActionTextColor(colors.theme().theme)
                 show()
             }
+        }
+    }
+
+    override fun showSyncMissedMessagesStarted() {
+        view?.run {
+            syncMissedSnackbar?.dismiss()
+            syncMissedSnackbar = Snackbar.make(
+                contentView,
+                R.string.toast_sync_missed_started,
+                Snackbar.LENGTH_INDEFINITE
+            ).also { it.show() }
+        }
+    }
+
+    override fun showSyncMissedMessagesResult(updated: Boolean) {
+        syncMissedSnackbar?.dismiss()
+        view?.run {
+            val message = when (updated) {
+                true -> R.string.toast_sync_missed_complete
+                false -> R.string.toast_sync_missed_no_updates
+            }
+            Snackbar.make(contentView, message, Snackbar.LENGTH_LONG).show()
+        }
+    }
+
+    override fun showSyncMissedMessagesFailed() {
+        syncMissedSnackbar?.dismiss()
+        view?.run {
+            Snackbar.make(contentView, R.string.toast_sync_missed_failed, Snackbar.LENGTH_LONG).show()
         }
     }
 

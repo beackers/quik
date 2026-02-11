@@ -27,12 +27,15 @@ import dev.octoshrimpy.quik.common.base.QkPresenter
 import dev.octoshrimpy.quik.common.util.Colors
 import dev.octoshrimpy.quik.common.util.DateFormatter
 import dev.octoshrimpy.quik.common.util.extensions.makeToast
+import dev.octoshrimpy.quik.interactor.SyncMissedMessages
 import dev.octoshrimpy.quik.interactor.SyncMessages
 import dev.octoshrimpy.quik.manager.BillingManager
 import dev.octoshrimpy.quik.repository.SyncRepository
 import dev.octoshrimpy.quik.util.NightModeManager
 import dev.octoshrimpy.quik.util.Preferences
+import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.rxkotlin.plusAssign
+import io.reactivex.schedulers.Schedulers
 import timber.log.Timber
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
@@ -47,7 +50,8 @@ class SettingsPresenter @Inject constructor(
     private val navigator: Navigator,
     private val nightModeManager: NightModeManager,
     private val prefs: Preferences,
-    private val syncMessages: SyncMessages
+    private val syncMessages: SyncMessages,
+    private val syncMissedMessages: SyncMissedMessages
 ) : QkPresenter<SettingsView, SettingsState>(SettingsState(
         nightModeId = prefs.nightMode.get()
 )) {
@@ -149,6 +153,7 @@ class SettingsPresenter @Inject constructor(
                 .subscribe { syncProgress -> newState { copy(syncProgress = syncProgress) } }
 
         disposables += syncMessages
+        disposables += syncMissedMessages
     }
 
     override fun bindIntents(view: SettingsView) {
@@ -215,6 +220,25 @@ class SettingsPresenter @Inject constructor(
                         R.id.messsageLinkHandling -> view.showMessageLinkHandlingDialogPicker()
 
                         R.id.disableScreenshots -> prefs.disableScreenshots.set(!prefs.disableScreenshots.get())
+
+                        R.id.syncMissed -> {
+                            view.showSyncMissedMessagesStarted()
+                            syncMissedMessages.buildObservableWithResult()
+                                .subscribeOn(Schedulers.io())
+                                .observeOn(AndroidSchedulers.mainThread())
+                                .autoDisposable(view.scope())
+                                .subscribe { result ->
+                                    when (result) {
+                                        is SyncMissedMessages.Result.Success -> {
+                                            view.showSyncMissedMessagesResult(result.updated)
+                                        }
+
+                                        is SyncMissedMessages.Result.Failure -> {
+                                            view.showSyncMissedMessagesFailed()
+                                        }
+                                    }
+                                }
+                        }
 
                         R.id.sync -> syncMessages.execute(Unit)
 
