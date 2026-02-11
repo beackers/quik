@@ -18,6 +18,7 @@
  */
 package dev.octoshrimpy.quik.worker
 
+import android.app.ActivityManager
 import android.content.Context
 import androidx.work.ForegroundInfo
 import androidx.work.Worker
@@ -40,6 +41,14 @@ class ReceiveSmsWorker(appContext: Context, workerParams: WorkerParameters)
         const val INPUT_DATA_KEY_MESSAGE_ID = "messageId"
     }
 
+    private enum class ExitReason(val value: String) {
+        SUCCESS("success"),
+        FILTERED("filtered"),
+        BLOCKED("blocked"),
+        TRANSIENT_ERROR("transient error"),
+        PERMANENT_ERROR("permanent error")
+    }
+
     @Inject lateinit var conversationRepo: ConversationRepository
     @Inject lateinit var blockingClient: BlockingClient
     @Inject lateinit var prefs: Preferences
@@ -51,15 +60,24 @@ class ReceiveSmsWorker(appContext: Context, workerParams: WorkerParameters)
     @Inject lateinit var contactsRepo: ContactRepository
 
     override fun doWork(): Result {
-        Timber.v("started")
+        val startTimeMs = System.currentTimeMillis()
+        val memoryInfo = buildMemoryInfo()
+        Timber.i(
+            "worker_start name=ReceiveSmsWorker timestampMs=$startTimeMs " +
+                "memoryClass=${memoryInfo.memoryClass} " +
+                "largeMemoryClass=${memoryInfo.largeMemoryClass} " +
+                "lowRam=${memoryInfo.isLowRamDevice} " +
+                "ramTier=${memoryInfo.ramTier}"
+        )
 
         val messageId = inputData.getLong(INPUT_DATA_KEY_MESSAGE_ID, -1)
         if (messageId < 0) {
-            Timber.v("failed. message id was {messageId}")
-            return Result.failure(inputData)
+            Timber.v("failed. message id was $messageId")
+            return finishWork(Result.failure(inputData), startTimeMs, ExitReason.PERMANENT_ERROR)
         }
 
-        val message = messageRepo.getMessage(messageId) ?: return Result.failure(inputData)
+        val message = messageRepo.getMessage(messageId)
+            ?: return finishWork(Result.failure(inputData), startTimeMs, ExitReason.PERMANENT_ERROR)
 
         val action = blockingClient.shouldBlock(message.address).blockingGet()
 
@@ -68,7 +86,7 @@ class ReceiveSmsWorker(appContext: Context, workerParams: WorkerParameters)
                 // blocked and 'drop blocked' remove from db and don't continue
                 Timber.v("address is blocked and drop blocked is on. dropped")
                 messageRepo.deleteMessages(listOf(message.id))
-                return Result.failure(inputData)
+                return finishWork(Result.failure(inputData), startTimeMs, ExitReason.BLOCKED)
             }
 
             action is BlockingClient.Action.Block -> {
@@ -93,18 +111,18 @@ class ReceiveSmsWorker(appContext: Context, workerParams: WorkerParameters)
         if (messageFilterAction) {
             Timber.v("message dropped based on content filters")
             messageRepo.deleteMessages(listOf(message.id))
-            return Result.failure(inputData)
+            return finishWork(Result.failure(inputData), startTimeMs, ExitReason.FILTERED)
         }
 
         // update and fetch conversation
         conversationRepo.updateConversations(listOf(message.threadId))
         val conversation = conversationRepo.getOrCreateConversation(message.threadId)
-            ?: return Result.failure(inputData)
+            ?: return finishWork(Result.failure(inputData), startTimeMs, ExitReason.TRANSIENT_ERROR)
 
         // don't notify (continue) for blocked conversations
         if (conversation.blocked) {
             Timber.v("no notifications for blocked")
-            return Result.failure(inputData)
+            return finishWork(Result.failure(inputData), startTimeMs, ExitReason.BLOCKED)
         }
 
         // unarchive conversation if necessary
@@ -128,7 +146,42 @@ class ReceiveSmsWorker(appContext: Context, workerParams: WorkerParameters)
 
         Timber.v("finished")
 
-        return Result.success()
+        return finishWork(Result.success(), startTimeMs, ExitReason.SUCCESS)
+    }
+
+    private fun finishWork(result: Result, startTimeMs: Long, exitReason: ExitReason): Result {
+        val endTimeMs = System.currentTimeMillis()
+        val memoryInfo = buildMemoryInfo()
+        Timber.i(
+            "worker_end name=ReceiveSmsWorker timestampMs=$endTimeMs durationMs=${endTimeMs - startTimeMs} " +
+                "exitReason=${exitReason.value} " +
+                "memoryClass=${memoryInfo.memoryClass} " +
+                "largeMemoryClass=${memoryInfo.largeMemoryClass} " +
+                "lowRam=${memoryInfo.isLowRamDevice} " +
+                "ramTier=${memoryInfo.ramTier}"
+        )
+        return result
+    }
+
+    private data class MemoryInfo(
+        val memoryClass: Int,
+        val largeMemoryClass: Int,
+        val isLowRamDevice: Boolean,
+        val ramTier: String
+    )
+
+    private fun buildMemoryInfo(): MemoryInfo {
+        val activityManager =
+            applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memoryClass = activityManager.memoryClass
+        val largeMemoryClass = activityManager.largeMemoryClass
+        val isLowRamDevice = activityManager.isLowRamDevice
+        val ramTier = when {
+            isLowRamDevice || memoryClass <= 128 -> "low"
+            memoryClass <= 256 -> "medium"
+            else -> "high"
+        }
+        return MemoryInfo(memoryClass, largeMemoryClass, isLowRamDevice, ramTier)
     }
 
     override fun getForegroundInfo() = ForegroundInfo(

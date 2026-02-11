@@ -18,6 +18,7 @@
  */
 package dev.octoshrimpy.quik.worker
 
+import android.app.ActivityManager
 import android.app.PendingIntent
 import android.content.ContentResolver
 import android.content.Context
@@ -77,6 +78,14 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
             Telephony.Mms.MESSAGE_TYPE + "=? AND " + Telephony.Mms.CONTENT_LOCATION + " =?"
     }
 
+    private enum class ExitReason(val value: String) {
+        SUCCESS("success"),
+        FILTERED("filtered"),
+        BLOCKED("blocked"),
+        TRANSIENT_ERROR("transient error"),
+        PERMANENT_ERROR("permanent error")
+    }
+
     @Inject lateinit var activeConversationManager: ActiveConversationManager
     @Inject lateinit var conversationRepo: ConversationRepository
     @Inject lateinit var blockingClient: BlockingClient
@@ -90,7 +99,15 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
     @Inject lateinit var contactsRepo: ContactRepository
 
     override fun doWork(): Result {
-        Timber.v("started")
+        val startTimeMs = System.currentTimeMillis()
+        val memoryInfo = buildMemoryInfo()
+        Timber.i(
+            "worker_start name=ReceiveMmsWorker timestampMs=$startTimeMs " +
+                "memoryClass=${memoryInfo.memoryClass} " +
+                "largeMemoryClass=${memoryInfo.largeMemoryClass} " +
+                "lowRam=${memoryInfo.isLowRamDevice} " +
+                "ramTier=${memoryInfo.ramTier}"
+        )
 
         val subscriptionId = inputData.getInt(INPUT_DATA_SUBSCRIPTION_ID, -1)
         val filePath = inputData.getString(INPUT_DATA_EXTRA_FILE_PATH) ?: ""
@@ -99,22 +116,24 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
 
         if (filePath.isEmpty()) {
             Timber.e("empty file path")
-            return Result.failure(inputData)
+            return finishWork(Result.failure(inputData), startTimeMs, ExitReason.PERMANENT_ERROR)
         }
 
         if (locationUrl.isEmpty()) {
             Timber.e("empty location url")
-            return Result.failure(inputData)
+            return finishWork(Result.failure(inputData), startTimeMs, ExitReason.PERMANENT_ERROR)
         }
 
         if (extraUri.isEmpty()) {
             Timber.e("empty extra uri")
-            return Result.failure(inputData)
+            return finishWork(Result.failure(inputData), startTimeMs, ExitReason.PERMANENT_ERROR)
         }
 
         Timber.v(filePath)
 
         val downloadFile = File(filePath)
+        var exitReason = ExitReason.SUCCESS
+        var result = Result.success()
         try {
             // read file into a bytearray
             val mmsData = FileInputStream(downloadFile).use { inputStream ->
@@ -152,7 +171,11 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
                 if (messageUri != null) {
                     // Sync the message
                     val message = syncRepo.syncMessage(messageUri)
-                        ?: return Result.failure(inputData)
+                        ?: return finishWork(
+                            Result.failure(inputData),
+                            startTimeMs,
+                            ExitReason.TRANSIENT_ERROR
+                        )
 
                     // TODO: Ideally this is done when we're saving the MMS to ContentResolver
                     // This change can be made once we move the MMS storing code to the Data module
@@ -170,6 +193,11 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
 
                     if (action is BlockingClient.Action.Block && shouldDrop) {
                         messageRepo.deleteMessages(listOf(message.id))
+                        return finishWork(
+                            Result.failure(inputData),
+                            startTimeMs,
+                            ExitReason.BLOCKED
+                        )
                     } else {
                         when (action) {
                             is BlockingClient.Action.Block -> {
@@ -191,19 +219,31 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
                         if (messageFilterAction) {
                             Timber.v("message dropped based on content filters")
                             messageRepo.deleteMessages(listOf(message.id))
-                            return Result.failure(inputData)
+                            return finishWork(
+                                Result.failure(inputData),
+                                startTimeMs,
+                                ExitReason.FILTERED
+                            )
                         }
 
                         // update the conversation
                         conversationRepo.updateConversations(listOf(message.threadId))
                         val conversation =
                             conversationRepo.getOrCreateConversation(message.threadId)
-                                ?: return Result.failure(inputData)
+                                ?: return finishWork(
+                                    Result.failure(inputData),
+                                    startTimeMs,
+                                    ExitReason.TRANSIENT_ERROR
+                                )
 
                         // don't notify (continue) for blocked conversations
                         if (conversation.blocked) {
                             Timber.v("no notifications for blocked")
-                            return Result.success(inputData)
+                            return finishWork(
+                                Result.success(inputData),
+                                startTimeMs,
+                                ExitReason.BLOCKED
+                            )
                         }
 
                         // unarchive conversation if necessary
@@ -235,22 +275,30 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
 
                     // send notify ind to mmsc
                     sendNotifyRespInd(applicationContext, subscriptionId, notificationInd)
+                } else {
+                    exitReason = ExitReason.TRANSIENT_ERROR
                 }
             }
-            else Timber.e("empty mms data")
+            else {
+                Timber.e("empty mms data")
+                exitReason = ExitReason.TRANSIENT_ERROR
+            }
         } catch (e: FileNotFoundException) {
             Timber.e("file not found: ${e.message}")
+            exitReason = ExitReason.TRANSIENT_ERROR
         } catch (e: IOException) {
             Timber.e("io exception: ${e.message}")
+            exitReason = ExitReason.TRANSIENT_ERROR
         } catch (e: Exception) {
             Timber.e("mms receive worker exception: ${e.message}")
+            exitReason = ExitReason.TRANSIENT_ERROR
         } finally {
             downloadFile.delete()
         }
 
         Timber.v("finished")
 
-        return Result.success()
+        return finishWork(result, startTimeMs, exitReason)
     }
 
     private fun handleHttpError(context: Context, mmsHttpStatus: Int, locationUrl: String) {
@@ -360,5 +408,40 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
         0,
         notificationManager.getForegroundNotificationForWorkersOnOlderAndroids()
     )
+
+    private fun finishWork(result: Result, startTimeMs: Long, exitReason: ExitReason): Result {
+        val endTimeMs = System.currentTimeMillis()
+        val memoryInfo = buildMemoryInfo()
+        Timber.i(
+            "worker_end name=ReceiveMmsWorker timestampMs=$endTimeMs durationMs=${endTimeMs - startTimeMs} " +
+                "exitReason=${exitReason.value} " +
+                "memoryClass=${memoryInfo.memoryClass} " +
+                "largeMemoryClass=${memoryInfo.largeMemoryClass} " +
+                "lowRam=${memoryInfo.isLowRamDevice} " +
+                "ramTier=${memoryInfo.ramTier}"
+        )
+        return result
+    }
+
+    private data class MemoryInfo(
+        val memoryClass: Int,
+        val largeMemoryClass: Int,
+        val isLowRamDevice: Boolean,
+        val ramTier: String
+    )
+
+    private fun buildMemoryInfo(): MemoryInfo {
+        val activityManager =
+            applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memoryClass = activityManager.memoryClass
+        val largeMemoryClass = activityManager.largeMemoryClass
+        val isLowRamDevice = activityManager.isLowRamDevice
+        val ramTier = when {
+            isLowRamDevice || memoryClass <= 128 -> "low"
+            memoryClass <= 256 -> "medium"
+            else -> "high"
+        }
+        return MemoryInfo(memoryClass, largeMemoryClass, isLowRamDevice, ramTier)
+    }
 
 }
