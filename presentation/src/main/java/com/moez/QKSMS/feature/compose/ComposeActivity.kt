@@ -118,6 +118,7 @@ import kotlinx.android.synthetic.main.compose_activity.messageAttachments
 import kotlinx.android.synthetic.main.compose_activity.messageList
 import kotlinx.android.synthetic.main.compose_activity.messagesEmpty
 import kotlinx.android.synthetic.main.compose_activity.noValidRecipients
+import kotlinx.android.synthetic.main.compose_activity.notificationBanner
 import kotlinx.android.synthetic.main.compose_activity.recordAudioMsg
 import kotlinx.android.synthetic.main.compose_activity.schedule
 import kotlinx.android.synthetic.main.compose_activity.scheduleLabel
@@ -138,6 +139,9 @@ import kotlinx.android.synthetic.main.compose_activity.speechToTextIcon
 import kotlinx.android.synthetic.main.compose_activity.speechToTextIconBorder
 import kotlinx.android.synthetic.main.compose_activity.toolbarSubtitle
 import kotlinx.android.synthetic.main.compose_activity.toolbarTitle
+import kotlinx.android.synthetic.main.notification_health_banner.notificationBannerButton
+import kotlinx.android.synthetic.main.notification_health_banner.notificationBannerMessage
+import kotlinx.android.synthetic.main.notification_health_banner.notificationBannerTitle
 import kotlinx.android.synthetic.main.main_activity.toolbar
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -207,6 +211,7 @@ class ComposeActivity : QkThemedActivity(), ComposeView {
     override val recordAudioMsgRecordVisible: Subject<Boolean> = PublishSubject.create()
     override val recordAudioChronometer: Subject<Boolean> = PublishSubject.create()
     override val recordAudioRecord: Subject<MicInputCloudView.ViewState> = PublishSubject.create()
+    override val notificationBannerButtonIntent: Subject<Unit> = PublishSubject.create()
 
     private var seekBarUpdater: Disposable? = null
 
@@ -231,6 +236,8 @@ class ComposeActivity : QkThemedActivity(), ComposeView {
         setContentView(R.layout.compose_activity)
         showBackButton(true)
         viewModel.bindView(this)
+
+        notificationBannerButton.setOnClickListener { notificationBannerButtonIntent.onNext(Unit) }
 
         contentView.layoutTransition = LayoutTransition().apply {
             disableTransitionType(LayoutTransition.CHANGING)
@@ -470,6 +477,31 @@ class ComposeActivity : QkThemedActivity(), ComposeView {
 
         // Don't set the adapters unless needed
         if (state.editingMode && chips.adapter == null) chips.adapter = chipsAdapter
+
+        val showNotificationBanner = !state.notificationsEnabled ||
+            !state.notificationChannelEnabled ||
+            !state.threadNotificationsEnabled
+        notificationBanner.isVisible = showNotificationBanner
+
+        when {
+            !state.notificationsEnabled -> {
+                notificationBannerTitle.setText(R.string.compose_notifications_disabled_title)
+                notificationBannerMessage.setText(R.string.compose_notifications_disabled_message)
+                notificationBannerButton.setText(R.string.compose_notifications_disabled_action)
+            }
+
+            !state.notificationChannelEnabled -> {
+                notificationBannerTitle.setText(R.string.compose_notification_channel_disabled_title)
+                notificationBannerMessage.setText(R.string.compose_notification_channel_disabled_message)
+                notificationBannerButton.setText(R.string.compose_notification_channel_disabled_action)
+            }
+
+            !state.threadNotificationsEnabled -> {
+                notificationBannerTitle.setText(R.string.compose_thread_notifications_off_title)
+                notificationBannerMessage.setText(R.string.compose_thread_notifications_off_message)
+                notificationBannerButton.setText(R.string.compose_thread_notifications_off_action)
+            }
+        }
 
         toolbar.menu.findItem(R.id.viewScheduledMessages)?.isVisible = !state.editingMode && state.selectedMessages == 0
                 && state.query.isEmpty() && state.hasScheduledMessages

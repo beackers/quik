@@ -326,7 +326,9 @@ class MainActivity : QkThemedActivity(), MainView {
                 snackbar.isVisible = (!state.defaultSms ||
                         !state.smsPermission ||
                         !state.contactPermission ||
-                        !state.notificationPermission)
+                        !state.notificationPermission ||
+                        !state.notificationsEnabled ||
+                        !state.notificationChannelEnabled)
             }
 
             is SyncRepository.SyncProgress.Running -> {
@@ -374,6 +376,18 @@ class MainActivity : QkThemedActivity(), MainView {
                 snackbarTitle?.setText(R.string.main_permission_required)
                 snackbarMessage?.setText(R.string.main_permission_notifications)
                 snackbarButton?.setText(R.string.main_permission_allow)
+            }
+
+            !state.notificationsEnabled -> {
+                snackbarTitle?.setText(R.string.main_notifications_disabled_title)
+                snackbarMessage?.setText(R.string.main_notifications_disabled_message)
+                snackbarButton?.setText(R.string.main_notifications_disabled_action)
+            }
+
+            !state.notificationChannelEnabled -> {
+                snackbarTitle?.setText(R.string.main_notification_channel_disabled_title)
+                snackbarMessage?.setText(R.string.main_notification_channel_disabled_message)
+                snackbarButton?.setText(R.string.main_notification_channel_disabled_action)
             }
         }
     }

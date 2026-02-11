@@ -76,6 +76,7 @@ class MainViewModel @Inject constructor(
     private val markUnarchived: MarkUnarchived,
     private val markUnpinned: MarkUnpinned,
     private val markUnread: MarkUnread,
+    private val notificationManager: dev.octoshrimpy.quik.manager.NotificationManager,
     private val speakThreads: SpeakThreads,
     private val navigator: Navigator,
     private val permissionManager: PermissionManager,
@@ -209,6 +210,24 @@ class MainViewModel @Inject constructor(
             .map { permissionManager.hasNotifications() }
             .distinctUntilChanged()
             .doOnNext { notificationPermission -> newState { copy(notificationPermission = notificationPermission) } }
+            .autoDisposable(view.scope())
+            .subscribe()
+
+        view.activityResumedIntent
+            .filter { resumed -> resumed }
+            .observeOn(Schedulers.io())
+            .map { notificationManager.areNotificationsEnabled() }
+            .distinctUntilChanged()
+            .doOnNext { enabled -> newState { copy(notificationsEnabled = enabled) } }
+            .autoDisposable(view.scope())
+            .subscribe()
+
+        view.activityResumedIntent
+            .filter { resumed -> resumed }
+            .observeOn(Schedulers.io())
+            .map { notificationManager.isNotificationChannelEnabled() }
+            .distinctUntilChanged()
+            .doOnNext { enabled -> newState { copy(notificationChannelEnabled = enabled) } }
             .autoDisposable(view.scope())
             .subscribe()
 
@@ -581,6 +600,8 @@ class MainViewModel @Inject constructor(
                                 view.requestPermissions()
                             }
                         }
+                        !state.notificationsEnabled -> navigator.showAppNotificationSettings()
+                        !state.notificationChannelEnabled -> navigator.showNotificationChannel()
                     }
                 }
                 .autoDisposable(view.scope())
