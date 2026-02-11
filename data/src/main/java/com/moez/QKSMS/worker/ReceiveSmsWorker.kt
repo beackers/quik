@@ -32,6 +32,7 @@ import dev.octoshrimpy.quik.repository.MessageContentFilterRepository
 import dev.octoshrimpy.quik.repository.MessageRepository
 import dev.octoshrimpy.quik.util.Preferences
 import timber.log.Timber
+import java.io.IOException
 import javax.inject.Inject
 
 class ReceiveSmsWorker(appContext: Context, workerParams: WorkerParameters)
@@ -54,81 +55,103 @@ class ReceiveSmsWorker(appContext: Context, workerParams: WorkerParameters)
         Timber.v("started")
 
         val messageId = inputData.getLong(INPUT_DATA_KEY_MESSAGE_ID, -1)
-        if (messageId < 0) {
-            Timber.v("failed. message id was {messageId}")
-            return Result.failure(inputData)
-        }
 
-        val message = messageRepo.getMessage(messageId) ?: return Result.failure(inputData)
+        return try {
+            if (messageId < 0) {
+                logEarlyExit("missing_message_id", messageId)
+                return Result.failure(inputData)
+            }
 
-        val action = blockingClient.shouldBlock(message.address).blockingGet()
+            val message = messageRepo.getMessage(messageId)
+            if (message == null) {
+                logEarlyExit("missing_message", messageId)
+                return Result.failure(inputData)
+            }
 
-        when {
-            ((action is BlockingClient.Action.Block) && prefs.drop.get()) -> {
-                // blocked and 'drop blocked' remove from db and don't continue
-                Timber.v("address is blocked and drop blocked is on. dropped")
+            val action = blockingClient.shouldBlock(message.address).blockingGet()
+
+            when {
+                ((action is BlockingClient.Action.Block) && prefs.drop.get()) -> {
+                    // blocked and 'drop blocked' remove from db and don't continue
+                    Timber.v("address is blocked and drop blocked is on. dropped")
+                    logEarlyExit("blocked_drop_enabled", messageId, message.threadId)
+                    messageRepo.deleteMessages(listOf(message.id))
+                    return Result.failure(inputData)
+                }
+
+                action is BlockingClient.Action.Block -> {
+                    // blocked
+                    Timber.v("address is blocked")
+                    messageRepo.markRead(listOf(message.threadId))
+                    conversationRepo.markBlocked(
+                        listOf(message.threadId),
+                        prefs.blockingManager.get(),
+                        action.reason
+                    )
+                }
+
+                action is BlockingClient.Action.Unblock -> {
+                    // unblock
+                    Timber.v("unblock conversation if blocked")
+                    conversationRepo.markUnblocked(message.threadId)
+                }
+            }
+
+            val messageFilterAction =
+                filterRepo.isBlocked(message.getText(), message.address, contactsRepo)
+            if (messageFilterAction) {
+                Timber.v("message dropped based on content filters")
+                logEarlyExit("content_filtered", messageId, message.threadId)
                 messageRepo.deleteMessages(listOf(message.id))
                 return Result.failure(inputData)
             }
 
-            action is BlockingClient.Action.Block -> {
-                // blocked
-                Timber.v("address is blocked")
-                messageRepo.markRead(listOf(message.threadId))
-                conversationRepo.markBlocked(
-                    listOf(message.threadId),
-                    prefs.blockingManager.get(),
-                    action.reason
-                )
+            // update and fetch conversation
+            conversationRepo.updateConversations(listOf(message.threadId))
+            val conversation = conversationRepo.getOrCreateConversation(message.threadId)
+            if (conversation == null) {
+                logEarlyExit("missing_conversation", messageId, message.threadId)
+                return Result.failure(inputData)
             }
 
-            action is BlockingClient.Action.Unblock -> {
-                // unblock
-                Timber.v("unblock conversation if blocked")
-                conversationRepo.markUnblocked(message.threadId)
+            // don't notify (continue) for blocked conversations
+            if (conversation.blocked) {
+                Timber.v("no notifications for blocked")
+                logEarlyExit("conversation_blocked", messageId, message.threadId)
+                return Result.failure(inputData)
             }
+
+            // unarchive conversation if necessary
+            if (conversation.archived) {
+                Timber.v("conversation unarchived")
+                conversationRepo.markUnarchived(listOf(conversation.id))
+            }
+
+            // update/create notification
+            Timber.v("update/create notification")
+            notificationManager.update(conversation.id)
+
+            // update shortcuts
+            Timber.v("update shortcuts")
+            shortcutManager.updateShortcuts()
+            shortcutManager.reportShortcutUsed(conversation.id)
+
+            // update the badge and widget
+            Timber.v("update badge and widget")
+            updateBadge.execute(Unit)
+
+            Timber.v("finished")
+
+            Result.success()
+        } catch (e: IOException) {
+            Timber.e(e, "receive_sms_failed reason=io_exception")
+            logEarlyExit("io_exception", messageId)
+            Result.retry()
+        } catch (e: Exception) {
+            Timber.e(e, "receive_sms_failed reason=unexpected_exception")
+            logEarlyExit("unexpected_exception", messageId)
+            Result.failure(inputData)
         }
-
-        val messageFilterAction = filterRepo.isBlocked(message.getText(), message.address, contactsRepo)
-        if (messageFilterAction) {
-            Timber.v("message dropped based on content filters")
-            messageRepo.deleteMessages(listOf(message.id))
-            return Result.failure(inputData)
-        }
-
-        // update and fetch conversation
-        conversationRepo.updateConversations(listOf(message.threadId))
-        val conversation = conversationRepo.getOrCreateConversation(message.threadId)
-            ?: return Result.failure(inputData)
-
-        // don't notify (continue) for blocked conversations
-        if (conversation.blocked) {
-            Timber.v("no notifications for blocked")
-            return Result.failure(inputData)
-        }
-
-        // unarchive conversation if necessary
-        if (conversation.archived) {
-            Timber.v("conversation unarchived")
-            conversationRepo.markUnarchived(listOf(conversation.id))
-        }
-
-        // update/create notification
-        Timber.v("update/create notification")
-        notificationManager.update(conversation.id)
-
-        // update shortcuts
-        Timber.v("update shortcuts")
-        shortcutManager.updateShortcuts()
-        shortcutManager.reportShortcutUsed(conversation.id)
-
-        // update the badge and widget
-        Timber.v("update badge and widget")
-        updateBadge.execute(Unit)
-
-        Timber.v("finished")
-
-        return Result.success()
     }
 
     override fun getForegroundInfo() = ForegroundInfo(
@@ -136,4 +159,12 @@ class ReceiveSmsWorker(appContext: Context, workerParams: WorkerParameters)
         notificationManager.getForegroundNotificationForWorkersOnOlderAndroids()
     )
 
+    private fun logEarlyExit(reason: String, messageId: Long, threadId: Long? = null) {
+        Timber.i(
+            "receive_sms_early_exit reason=%s messageId=%d threadId=%s",
+            reason,
+            messageId,
+            threadId?.toString() ?: "unknown"
+        )
+    }
 }

@@ -98,17 +98,17 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
         val extraUri = inputData.getString(INPUT_DATA_EXTRA_URI) ?: ""
 
         if (filePath.isEmpty()) {
-            Timber.e("empty file path")
+            logEarlyExit("missing_file_path", subscriptionId)
             return Result.failure(inputData)
         }
 
         if (locationUrl.isEmpty()) {
-            Timber.e("empty location url")
+            logEarlyExit("missing_location_url", subscriptionId)
             return Result.failure(inputData)
         }
 
         if (extraUri.isEmpty()) {
-            Timber.e("empty extra uri")
+            logEarlyExit("missing_extra_uri", subscriptionId)
             return Result.failure(inputData)
         }
 
@@ -152,7 +152,10 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
                 if (messageUri != null) {
                     // Sync the message
                     val message = syncRepo.syncMessage(messageUri)
-                        ?: return Result.failure(inputData)
+                    if (message == null) {
+                        logEarlyExit("sync_message_missing", subscriptionId, locationUrl)
+                        return Result.failure(inputData)
+                    }
 
                     // TODO: Ideally this is done when we're saving the MMS to ContentResolver
                     // This change can be made once we move the MMS storing code to the Data module
@@ -169,6 +172,7 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
                     Timber.v("block=$action, drop=$shouldDrop")
 
                     if (action is BlockingClient.Action.Block && shouldDrop) {
+                        logEarlyExit("blocked_drop_enabled", subscriptionId, locationUrl, message.threadId)
                         messageRepo.deleteMessages(listOf(message.id))
                     } else {
                         when (action) {
@@ -190,6 +194,7 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
                         val messageFilterAction = filterRepo.isBlocked(message.getText(), message.address, contactsRepo)
                         if (messageFilterAction) {
                             Timber.v("message dropped based on content filters")
+                            logEarlyExit("content_filtered", subscriptionId, locationUrl, message.threadId)
                             messageRepo.deleteMessages(listOf(message.id))
                             return Result.failure(inputData)
                         }
@@ -198,11 +203,15 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
                         conversationRepo.updateConversations(listOf(message.threadId))
                         val conversation =
                             conversationRepo.getOrCreateConversation(message.threadId)
-                                ?: return Result.failure(inputData)
+                        if (conversation == null) {
+                            logEarlyExit("missing_conversation", subscriptionId, locationUrl, message.threadId)
+                            return Result.failure(inputData)
+                        }
 
                         // don't notify (continue) for blocked conversations
                         if (conversation.blocked) {
                             Timber.v("no notifications for blocked")
+                            logEarlyExit("conversation_blocked", subscriptionId, locationUrl, message.threadId)
                             return Result.success(inputData)
                         }
 
@@ -235,15 +244,28 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
 
                     // send notify ind to mmsc
                     sendNotifyRespInd(applicationContext, subscriptionId, notificationInd)
+                } else {
+                    Timber.e("message uri was null")
+                    logEarlyExit("persist_failed", subscriptionId, locationUrl)
+                    return Result.retry()
                 }
+            } else {
+                Timber.e("empty mms data")
+                logEarlyExit("empty_mms_data", subscriptionId, locationUrl)
+                return Result.retry()
             }
-            else Timber.e("empty mms data")
         } catch (e: FileNotFoundException) {
-            Timber.e("file not found: ${e.message}")
+            Timber.e(e, "file not found")
+            logEarlyExit("file_not_found", subscriptionId, locationUrl)
+            return Result.failure(inputData)
         } catch (e: IOException) {
-            Timber.e("io exception: ${e.message}")
+            Timber.e(e, "io exception")
+            logEarlyExit("io_exception", subscriptionId, locationUrl)
+            return Result.retry()
         } catch (e: Exception) {
-            Timber.e("mms receive worker exception: ${e.message}")
+            Timber.e(e, "mms receive worker exception")
+            logEarlyExit("unexpected_exception", subscriptionId, locationUrl)
+            return Result.failure(inputData)
         } finally {
             downloadFile.delete()
         }
@@ -360,5 +382,20 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
         0,
         notificationManager.getForegroundNotificationForWorkersOnOlderAndroids()
     )
+
+    private fun logEarlyExit(
+        reason: String,
+        subscriptionId: Int,
+        locationUrl: String? = null,
+        threadId: Long? = null
+    ) {
+        Timber.i(
+            "receive_mms_early_exit reason=%s subscriptionId=%d locationUrl=%s threadId=%s",
+            reason,
+            subscriptionId,
+            locationUrl ?: "unknown",
+            threadId?.toString() ?: "unknown"
+        )
+    }
 
 }
