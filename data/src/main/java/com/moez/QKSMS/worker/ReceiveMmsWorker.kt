@@ -57,11 +57,14 @@ import dev.octoshrimpy.quik.repository.SyncRepository
 import dev.octoshrimpy.quik.util.Preferences
 import timber.log.Timber
 import java.io.File
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.UUID
+import kotlin.math.min
 import javax.inject.Inject
 
 class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
@@ -75,6 +78,9 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
 
         private const val LOCATION_SELECTION =
             Telephony.Mms.MESSAGE_TYPE + "=? AND " + Telephony.Mms.CONTENT_LOCATION + " =?"
+
+        private const val DEFAULT_MMS_IN_MEMORY_LIMIT_BYTES = 2 * 1024 * 1024
+        private const val MMS_READ_BUFFER_BYTES = 16 * 1024
     }
 
     @Inject lateinit var activeConversationManager: ActiveConversationManager
@@ -115,13 +121,35 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
         Timber.v(filePath)
 
         val downloadFile = File(filePath)
+        val mmsConfig = Overridden(MmsConfig(applicationContext), null)
+        val inMemoryLimitBytes = resolveInMemoryLimit(mmsConfig)
+        var shouldDeleteDownloadFile = true
         try {
-            // read file into a bytearray
-            val mmsData = FileInputStream(downloadFile).use { inputStream ->
-                val fileLength = downloadFile.length().toInt()
-                ByteArray(fileLength).let { bytes ->
-                    inputStream.read(bytes, 0, fileLength)
-                    bytes
+            val mmsDataResult = readMmsPayload(
+                downloadFile,
+                mmsConfig.getMaxMessageSize(),
+                inMemoryLimitBytes
+            )
+            val mmsData = when (mmsDataResult) {
+                is MmsPayloadReadResult.Success -> mmsDataResult.data
+                is MmsPayloadReadResult.TooLarge -> {
+                    Timber.w(
+                        "mms payload size ${mmsDataResult.size} exceeds limit " +
+                            "${mmsDataResult.limit}; policy=${mmsDataResult.policy}"
+                    )
+                    shouldDeleteDownloadFile = mmsDataResult.policy != PayloadSizePolicy.RETRY
+                    return when (mmsDataResult.policy) {
+                        PayloadSizePolicy.RETRY -> Result.retry()
+                        PayloadSizePolicy.FAIL -> Result.failure(inputData)
+                    }
+                }
+                is MmsPayloadReadResult.Empty -> {
+                    Timber.e("empty mms data")
+                    return Result.failure(inputData)
+                }
+                is MmsPayloadReadResult.Error -> {
+                    Timber.e(mmsDataResult.cause, "error reading mms payload")
+                    return Result.failure(inputData)
                 }
             }
 
@@ -136,7 +164,7 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
                 // persist message
                 val messageUri = DownloadRequest.persist(
                     applicationContext, mmsData,
-                    Overridden(MmsConfig(applicationContext), null),
+                    mmsConfig,
                     locationUrl, subscriptionId, null
                 )
 
@@ -242,15 +270,107 @@ class ReceiveMmsWorker(appContext: Context, workerParams: WorkerParameters)
             Timber.e("file not found: ${e.message}")
         } catch (e: IOException) {
             Timber.e("io exception: ${e.message}")
+        } catch (e: OutOfMemoryError) {
+            Timber.e(e, "out of memory while handling mms payload")
+            shouldDeleteDownloadFile = false
+            return Result.retry()
         } catch (e: Exception) {
             Timber.e("mms receive worker exception: ${e.message}")
         } finally {
-            downloadFile.delete()
+            if (shouldDeleteDownloadFile) {
+                downloadFile.delete()
+            } else {
+                Timber.w("deferring mms processing; keeping download file for retry")
+            }
         }
 
         Timber.v("finished")
 
         return Result.success()
+    }
+
+    private enum class PayloadSizePolicy {
+        RETRY,
+        FAIL
+    }
+
+    private sealed class MmsPayloadReadResult {
+        data class Success(val data: ByteArray) : MmsPayloadReadResult()
+        data class TooLarge(val size: Long, val limit: Long, val policy: PayloadSizePolicy) :
+            MmsPayloadReadResult()
+        data class Error(val cause: Throwable) : MmsPayloadReadResult()
+        object Empty : MmsPayloadReadResult()
+    }
+
+    private fun resolveInMemoryLimit(mmsConfig: Overridden): Int {
+        val maxMessageSize = mmsConfig.getMaxMessageSize()
+        return if (maxMessageSize > 0) {
+            min(maxMessageSize, DEFAULT_MMS_IN_MEMORY_LIMIT_BYTES)
+        } else {
+            DEFAULT_MMS_IN_MEMORY_LIMIT_BYTES
+        }
+    }
+
+    private fun readMmsPayload(
+        downloadFile: File,
+        maxMessageSize: Int,
+        inMemoryLimitBytes: Int
+    ): MmsPayloadReadResult {
+        val payloadSize = downloadFile.length()
+        if (payloadSize <= 0L) {
+            return MmsPayloadReadResult.Empty
+        }
+
+        if (payloadSize > Int.MAX_VALUE) {
+            return MmsPayloadReadResult.TooLarge(
+                payloadSize,
+                Int.MAX_VALUE.toLong(),
+                PayloadSizePolicy.FAIL
+            )
+        }
+
+        if (maxMessageSize > 0 && payloadSize > maxMessageSize) {
+            return MmsPayloadReadResult.TooLarge(
+                payloadSize,
+                maxMessageSize.toLong(),
+                PayloadSizePolicy.FAIL
+            )
+        }
+
+        if (payloadSize > inMemoryLimitBytes) {
+            return MmsPayloadReadResult.TooLarge(
+                payloadSize,
+                inMemoryLimitBytes.toLong(),
+                PayloadSizePolicy.RETRY
+            )
+        }
+
+        return try {
+            FileInputStream(downloadFile).use { inputStream ->
+                BufferedInputStream(inputStream, MMS_READ_BUFFER_BYTES).use { bufferedInput ->
+                    val expectedSize = min(payloadSize, inMemoryLimitBytes.toLong()).toInt()
+                    val output = ByteArrayOutputStream(expectedSize)
+                    val buffer = ByteArray(MMS_READ_BUFFER_BYTES)
+                    var totalRead = 0
+                    while (true) {
+                        val read = bufferedInput.read(buffer)
+                        if (read == -1) break
+                        totalRead += read
+                        if (totalRead > inMemoryLimitBytes) {
+                            return MmsPayloadReadResult.TooLarge(
+                                payloadSize,
+                                inMemoryLimitBytes.toLong(),
+                                PayloadSizePolicy.RETRY
+                            )
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                    MmsPayloadReadResult.Success(output.toByteArray())
+                }
+            }
+        } catch (e: IOException) {
+            MmsPayloadReadResult.Error(e)
+        }
     }
 
     private fun handleHttpError(context: Context, mmsHttpStatus: Int, locationUrl: String) {
