@@ -38,6 +38,7 @@ class ReceiveSmsWorker(appContext: Context, workerParams: WorkerParameters)
     : Worker(appContext, workerParams) {
     companion object {
         const val INPUT_DATA_KEY_MESSAGE_ID = "messageId"
+        const val BACKOFF_DELAY_SECONDS = 30L
     }
 
     @Inject lateinit var conversationRepo: ConversationRepository
@@ -59,7 +60,7 @@ class ReceiveSmsWorker(appContext: Context, workerParams: WorkerParameters)
             return Result.failure(inputData)
         }
 
-        val message = messageRepo.getMessage(messageId) ?: return Result.failure(inputData)
+        val message = messageRepo.getMessage(messageId) ?: return Result.retry()
 
         val action = blockingClient.shouldBlock(message.address).blockingGet()
 

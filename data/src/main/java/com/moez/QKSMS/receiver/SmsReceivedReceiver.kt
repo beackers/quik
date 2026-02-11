@@ -22,49 +22,69 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony.Sms
+import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import dagger.android.AndroidInjection
-import dev.octoshrimpy.quik.repository.MessageRepository
+import dev.octoshrimpy.quik.worker.PersistSmsWorker
 import dev.octoshrimpy.quik.worker.ReceiveSmsWorker
-import dev.octoshrimpy.quik.worker.ReceiveSmsWorker.Companion.INPUT_DATA_KEY_MESSAGE_ID
-import io.reactivex.Single
-import io.reactivex.schedulers.Schedulers
 import timber.log.Timber
-import javax.inject.Inject
+import java.util.concurrent.TimeUnit
 
 class SmsReceivedReceiver : BroadcastReceiver() {
-    @Inject lateinit var messageRepo: MessageRepository
-
     override fun onReceive(context: Context, intent: Intent) {
         AndroidInjection.inject(this, context)
 
-        Sms.Intents.getMessagesFromIntent(intent)?.let { messages ->
-            // reduce list of messages to single message and save in db
-            val messageId = Single.just(messages)
-                .observeOn(Schedulers.io())
-                .map {
-                    Timber.v("onReceive() new sms")  // here so runs on io thread
-
-                    messageRepo.insertReceivedSms(
-                        intent.extras?.getInt("subscription", -1) ?: -1,
-                        messages[0].displayOriginatingAddress,
-                        messages.mapNotNull { it.displayMessageBody }.reduce { body, new -> body + new },
-                        messages[0].timestampMillis
-                    ).id
-                }
-                .blockingGet()
-
-            // start worker with message id as param
-            WorkManager.getInstance(context).enqueue(
-                OneTimeWorkRequestBuilder<ReceiveSmsWorker>()
-                    .setInputData(workDataOf(INPUT_DATA_KEY_MESSAGE_ID to messageId))
-                    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                    .build()
-            )
+        val messages = Sms.Intents.getMessagesFromIntent(intent) ?: return
+        if (messages.isEmpty()) {
+            Timber.v("onReceive() empty sms payload")
+            return
         }
+
+        val address = messages[0].displayOriginatingAddress?.takeIf { it.isNotBlank() }
+        val body = messages.mapNotNull { it.displayMessageBody }.joinToString("")
+
+        if (address == null || body.isBlank()) {
+            Timber.w("onReceive() sms failed preflight validation")
+            return
+        }
+
+        val subscriptionId = intent.extras?.getInt("subscription", -1) ?: -1
+        val sentTime = messages[0].timestampMillis
+
+        Timber.v("onReceive() new sms")
+        val persistRequest = OneTimeWorkRequestBuilder<PersistSmsWorker>()
+            .setInputData(
+                workDataOf(
+                    PersistSmsWorker.INPUT_DATA_ADDRESS to address,
+                    PersistSmsWorker.INPUT_DATA_BODY to body,
+                    PersistSmsWorker.INPUT_DATA_SUB_ID to subscriptionId,
+                    PersistSmsWorker.INPUT_DATA_SENT_TIME to sentTime
+                )
+            )
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                PersistSmsWorker.BACKOFF_DELAY_SECONDS,
+                TimeUnit.SECONDS
+            )
+            .build()
+
+        val receiveRequest = OneTimeWorkRequestBuilder<ReceiveSmsWorker>()
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                ReceiveSmsWorker.BACKOFF_DELAY_SECONDS,
+                TimeUnit.SECONDS
+            )
+            .build()
+
+        WorkManager.getInstance(context)
+            .beginWith(persistRequest)
+            .then(receiveRequest)
+            .enqueue()
     }
 
 }
